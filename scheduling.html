@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPU Scheduler Pro</title>
+    <style>
+        :root {
+            --bg: #1e1e2e;
+            --panel: #2a2a3c;
+            --text: #cdd6f4;
+            --primary: #89b4fa;
+            --accent: #f5c2e7;
+            --border: #444;
+        }
+        body { font-family: 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .panel { background: var(--panel); padding: 25px; border-radius: 15px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); margin-bottom: 25px; border: 1px solid var(--border); }
+        h1, h2, h3 { color: var(--primary); margin-top: 0; }
+        .input-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .process-input { border: 1px solid var(--border); padding: 15px; border-radius: 10px; background: rgba(0,0,0,0.2); }
+        .process-input label { display: block; font-weight: bold; margin-bottom: 5px; color: var(--accent); }
+        .process-input input { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); box-sizing: border-box; }
+        .controls { display: flex; gap: 15px; justify-content: center; align-items: center; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 20px; flex-wrap: wrap; }
+        button { padding: 12px 25px; background: var(--primary); color: #111; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.3s; }
+        button:hover { background: #b4befe; }
+        input[type="number"] { padding: 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); }
+        .gantt-chart { display: flex; height: 50px; border-radius: 8px; overflow: hidden; margin: 15px 0 30px 0; border: 1px solid var(--border); background: #111; }
+        .gantt-block { display: flex; flex-direction: column; justify-content: center; align-items: center; color: #111; font-weight: bold; position: relative; border-right: 1px solid rgba(0,0,0,0.3); }
+        .gantt-time { position: absolute; bottom: -22px; font-size: 12px; color: #a6adc8; font-weight: normal; }
+        .gantt-time.start { left: 2px; }
+        .gantt-time.end { right: 2px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; background: var(--panel); border-radius: 10px; overflow: hidden; }
+        th, td { padding: 12px; text-align: center; border-bottom: 1px solid var(--border); }
+        th { background-color: rgba(0,0,0,0.3); color: var(--primary); }
+        .avg-row td { font-weight: bold; background: rgba(137, 180, 250, 0.2); }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="panel">
+        <h1>CPU Scheduler</h1>
+        <div class="controls">
+            <label>Processes: <input type="number" id="numProcesses" value="5" min="1" max="10" style="width:50px;"></label>
+            <button onclick="generateInputs()">Generate</button>
+            <label>Quantum: <input type="number" id="quantum" value="3" style="width:50px;"></label>
+            <button onclick="runSimulation()" style="background:var(--accent);">Run</button>
+        </div>
+        <div id="processInputs" class="input-grid"></div>
+    </div>
+    <div id="results"></div>
+</div>
+<script>
+function generateInputs() {
+    const num = document.getElementById('numProcesses').value;
+    const container = document.getElementById('processInputs');
+    container.innerHTML = "";
+    for(let i=1; i<=num; i++) {
+        container.innerHTML += `
+            <div class="process-input">
+                <label>Process ${i}</label>
+                AT: <input type="number" class="at" value="0">
+                BT: <input type="number" class="bt" value="5">
+                P: <input type="number" class="p" value="1">
+            </div>
+        `;
+    }
+}
+generateInputs();
+
+function runSimulation() {
+    let processes = [];
+    let inputs = document.querySelectorAll('.process-input');
+    inputs.forEach((group, i) => {
+        processes.push({
+            id: 'P' + (i + 1),
+            at: parseInt(group.querySelector('.at').value),
+            bt: parseInt(group.querySelector('.bt').value),
+            p: parseInt(group.querySelector('.p').value),
+            remainingTime: parseInt(group.querySelector('.bt').value),
+            ct: 0, tat: 0, wt: 0
+        });
+    });
+    let quantum = parseInt(document.getElementById('quantum').value);
+    let resultsDiv = document.getElementById('results');
+    resultsDiv.innerHTML = "";
+    resultsDiv.innerHTML += generateGantt("FCFS Scheduling", calculateFCFS(JSON.parse(JSON.stringify(processes))));
+    resultsDiv.innerHTML += generateGantt("SJF (Non-Preemptive)", calculateSJF(JSON.parse(JSON.stringify(processes))));
+    resultsDiv.innerHTML += generateGantt("SRTF (Pre-emptive SJF)", calculateSRTF(JSON.parse(JSON.stringify(processes))));
+    resultsDiv.innerHTML += generateGantt("Pre-emptive Priority", calculatePriority(JSON.parse(JSON.stringify(processes))));
+    resultsDiv.innerHTML += generateGantt("Round Robin (Q=" + quantum + ")", calculateRR(JSON.parse(JSON.stringify(processes)), quantum));
+}
+
+function calculateFCFS(procs) {
+    // Sort by AT, but if AT is equal, sort by original index to match Mam's order
+    procs.sort((a, b) => a.at - b.at || procs.indexOf(a) - procs.indexOf(b));
+    let currentTime = 0, gantt = [];
+    procs.forEach(p => {
+        if (currentTime < p.at) {
+            gantt.push({id: "Idle", start: currentTime, end: p.at, color: "#585b70"});
+            currentTime = p.at;
+        }
+        gantt.push({id: p.id, start: currentTime, end: currentTime + p.bt, color: "#89b4fa"});
+        currentTime += p.bt;
+        p.ct = currentTime;
+        p.tat = p.ct - p.at;
+        p.wt = p.tat - p.bt;
+    });
+    return {gantt, procs};
+}
+
+function calculateRR(procs, q) {
+    // Exact Mam Logic: Sort by AT to determine arrival order
+    procs.sort((a, b) => a.at - b.at);
+    let currentTime = 0, completed = 0, n = procs.length, gantt = [];
+    let queue = [], addedToQueue = new Array(n).fill(false);
+    
+    // Initial arrival
+    for(let i=0; i<n; i++) { if(procs[i].at <= currentTime) { queue.push(i); addedToQueue[i] = true; } }
+    
+    while(completed < n) {
+        if(queue.length === 0) {
+            let nextProc = procs.findIndex(p => p.remainingTime > 0);
+            if(nextProc !== -1) {
+                gantt.push({id: "Idle", start: currentTime, end: procs[nextProc].at, color: "#585b70"});
+                currentTime = procs[nextProc].at;
+                for(let i=0; i<n; i++) { if(procs[i].at <= currentTime && procs[i].remainingTime > 0 && !addedToQueue[i]) { queue.push(i); addedToQueue[i] = true; } }
+                continue;
+            }
+        }
+        
+        let idx = queue.shift();
+        let executeTime = Math.min(procs[idx].remainingTime, q);
+        gantt.push({id: procs[idx].id, start: currentTime, end: currentTime + executeTime, color: "#fab387"});
+        currentTime += executeTime;
+        procs[idx].remainingTime -= executeTime;
+        
+        // Mam Logic: Add newly arrived processes to queue BEFORE putting current process back
+        for(let i=0; i<n; i++) {
+            if(procs[i].at <= currentTime && !addedToQueue[i] && procs[i].remainingTime > 0) {
+                queue.push(i);
+                addedToQueue[i] = true;
+            }
+        }
+        
+        if(procs[idx].remainingTime > 0) queue.push(idx);
+        else {
+            completed++;
+            procs[idx].ct = currentTime;
+            procs[idx].tat = procs[idx].ct - procs[idx].at;
+            procs[idx].wt = procs[idx].tat - procs[idx].bt;
+        }
+    }
+    return {gantt, procs};
+}
+
+// [SJF, SRTF, Priority remain the same as previous functional version]
+function calculateSJF(procs) {
+    let currentTime = 0, completed = 0, n = procs.length, gantt = [];
+    let isDone = new Array(n).fill(false);
+    while(completed < n) {
+        let idx = -1, minBt = Infinity;
+        for(let i=0; i<n; i++) {
+            if(procs[i].at <= currentTime && !isDone[i] && procs[i].bt < minBt) {
+                minBt = procs[i].bt;
+                idx = i;
+            }
+        }
+        if(idx != -1) {
+            gantt.push({id: procs[idx].id, start: currentTime, end: currentTime + procs[idx].bt, color: "#a6e3a1"});
+            currentTime += procs[idx].bt;
+            procs[idx].ct = currentTime;
+            procs[idx].tat = procs[idx].ct - procs[idx].at;
+            procs[idx].wt = procs[idx].tat - procs[idx].bt;
+            isDone[idx] = true;
+            completed++;
+        } else { currentTime++; gantt.push({id: "Idle", start: currentTime-1, end: currentTime, color: "#585b70"}); }
+    }
+    return {gantt, procs};
+}
+
+function calculateSRTF(procs) {
+    let currentTime = 0, completed = 0, n = procs.length, gantt = [];
+    let lastId = null;
+    while(completed < n) {
+        let idx = -1, minRemaining = Infinity;
+        for(let i=0; i<n; i++) {
+            if(procs[i].at <= currentTime && procs[i].remainingTime > 0 && procs[i].remainingTime < minRemaining) {
+                minRemaining = procs[i].remainingTime;
+                idx = i;
+            }
+        }
+        if(idx != -1) {
+            if (lastId !== procs[idx].id) {
+                if(gantt.length > 0) gantt[gantt.length-1].end = currentTime;
+                gantt.push({id: procs[idx].id, start: currentTime, end: currentTime + 1, color: "#94e2d5"});
+            } else { gantt[gantt.length-1].end = currentTime + 1; }
+            lastId = procs[idx].id;
+            procs[idx].remainingTime--;
+            currentTime++;
+            if(procs[idx].remainingTime === 0) {
+                procs[idx].ct = currentTime;
+                procs[idx].tat = procs[idx].ct - procs[idx].at;
+                procs[idx].wt = procs[idx].tat - procs[idx].bt;
+                completed++;
+                lastId = null;
+            }
+        } else { currentTime++; lastId = null; gantt.push({id: "Idle", start: currentTime-1, end: currentTime, color: "#585b70"}); }
+    }
+    return {gantt, procs};
+}
+
+function calculatePriority(procs) {
+    let currentTime = 0, completed = 0, n = procs.length, gantt = [];
+    let isDone = new Array(n).fill(false);
+    let lastId = null;
+    while(completed < n) {
+        let idx = -1, highestP = -Infinity;
+        for(let i=0; i<n; i++) {
+            if(procs[i].at <= currentTime && !isDone[i] && procs[i].p > highestP) {
+                highestP = procs[i].p;
+                idx = i;
+            }
+        }
+        if(idx != -1) {
+            if (lastId !== procs[idx].id) {
+                if(gantt.length > 0) gantt[gantt.length-1].end = currentTime;
+                gantt.push({id: procs[idx].id, start: currentTime, end: currentTime + 1, color: "#f5c2e7"});
+            } else { gantt[gantt.length-1].end = currentTime + 1; }
+            lastId = procs[idx].id;
+            procs[idx].remainingTime--;
+            currentTime++;
+            if(procs[idx].remainingTime === 0) {
+                procs[idx].ct = currentTime;
+                procs[idx].tat = procs[idx].ct - procs[idx].at;
+                procs[idx].wt = procs[idx].tat - procs[idx].bt;
+                isDone[idx] = true;
+                completed++;
+                lastId = null;
+            }
+        } else { currentTime++; lastId = null; gantt.push({id: "Idle", start: currentTime-1, end: currentTime, color: "#585b70"}); }
+    }
+    return {gantt, procs};
+}
+
+function generateGantt(title, data) {
+    let html = `<div class="panel"><h3>${title}</h3><div class="gantt-chart">`;
+    let totalTime = data.gantt[data.gantt.length-1].end;
+    data.gantt.forEach(block => {
+        let width = ((block.end - block.start) / totalTime) * 100;
+        html += `<div class="gantt-block" style="width: ${width}%; background-color: ${block.color};">
+            <b>${block.id}</b>
+            <span class="gantt-time start">${block.start}</span>
+            <span class="gantt-time end">${block.end}</span>
+        </div>`;
+    });
+    html += `</div>${generateTable(data.procs)}</div>`;
+    return html;
+}
+
+function generateTable(procs) {
+    let avgTat = (procs.reduce((s, p) => s + p.tat, 0) / procs.length).toFixed(1);
+    let avgWt = (procs.reduce((s, p) => s + p.wt, 0) / procs.length).toFixed(1);
+    let html = `<table><tr><th>ID</th><th>AT</th><th>BT</th><th>Priority</th><th>CT</th><th>TAT</th><th>WT</th></tr>`;
+    procs.sort((a,b) => a.id.localeCompare(b.id)).forEach(p => {
+        html += `<tr><td>${p.id}</td><td>${p.at}</td><td>${p.bt}</td><td>${p.p}</td><td>${p.ct}</td><td>${p.tat}</td><td>${p.wt}</td></tr>`;
+    });
+    html += `<tr class="avg-row"><td colspan="5">Average</td><td>${avgTat}</td><td>${avgWt}</td></tr></table>`;
+    return html;
+}
+runSimulation();
+</script>
+</body>
+</html>
